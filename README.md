@@ -6,10 +6,21 @@ Clinicify is a hackathon-ready OPD operations interface centered on a doctor-spe
 
 ```bash
 npm install
+npm run seed
 npm run dev
 ```
 
 Open `http://localhost:3000`.
+
+Demo staff accounts are seeded by `npm run seed`. Their roles are assigned as Firebase custom claims; the UI cannot grant a role.
+
+## Firebase local setup
+
+1. Add Firebase and Resend values to `.env.local` (never commit this file or `.secrets/firebase-admin.json`).
+2. Run `npm run seed` to create synthetic staff, queues, visits, and inventory.
+3. In Firebase Console → Firestore Database → Rules, publish the contents of `firestore.rules`. The rule set permits authenticated staff reads only and denies direct client writes; Clinicify API routes use Firebase Admin credentials for trusted mutations.
+
+The public patient tracking page is `http://localhost:3000/track/demo-gm-080`. New visits receive an unguessable tracking key from the server.
 
 ## Architecture
 

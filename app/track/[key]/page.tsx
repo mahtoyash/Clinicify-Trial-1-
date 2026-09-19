@@ -1,0 +1,8 @@
+import { notFound } from "next/navigation";
+import { adminDb } from "@/lib/firebase/admin";
+export const dynamic = "force-dynamic";
+const time = (value: { toDate?: () => Date } | undefined) => value?.toDate ? new Intl.DateTimeFormat("en-IN", { hour: "numeric", minute: "2-digit" }).format(value.toDate()) : "Updating";
+export default async function TrackingPage({ params }: { params: Promise<{ key: string }> }) {
+  const { key } = await params; const visitSnapshot = await adminDb().collection("visits").where("trackingKey", "==", key).limit(1).get(); const visit = visitSnapshot.docs[0]?.data(); if (!visit) notFound(); const doctor = visit.doctorId ? (await adminDb().collection("doctors").doc(visit.doctorId).get()).data() : undefined;
+  return <main className="tracking"><header><a className="brand" href="/"><span>✚</span> CLINICIFY</a><button>Live queue tracking</button></header><main><p className="eyebrow">Your OPD visit</p><h1>{visit.token}</h1><p className="tracking-doctor">{doctor?.name ?? "Your doctor"} · {doctor?.department ?? "Clinic"}</p><div className="track-status"><span className="pulse"/> QUEUE STATUS · {String(visit.status).replace("_", " ")}</div><section className="eta-card"><p>Expected consultation</p><h2>{time(visit.etaLower)} – {time(visit.etaUpper)}</h2><span>Recommended arrival <b>{time(visit.recommendedArrival)}</b></span></section><aside className="priority-note"><b>Privacy protected</b><p>Clinicify updates your own visit only. It never displays another patient’s identity or medical information.</p></aside><p className="last-updated">Your time updates when the queue changes. Refresh this page for the latest result.</p></main></main>;
+}
