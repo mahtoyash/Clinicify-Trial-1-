@@ -5,6 +5,7 @@ import type { Doctor, QueueState, Role, Visit } from "@/lib/domain/types";
 import { firebaseAuth } from "@/lib/firebase/client";
 import { subscribeClinicify } from "@/lib/firebase/realtime";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User } from "firebase/auth";
+import { AdminLive, BillingLive, DoctorLive, InventoryLive, PharmacyLive, ReceptionLive } from "./live-workflows";
 
 const nav = ["Overview", "Reception", "Doctor queue", "Pharmacy", "Inventory", "Billing", "Admin"] as const;
 type Screen = typeof nav[number] | "Tracking";
@@ -17,20 +18,20 @@ function PageHeader({ eyebrow, title, description, action }: { eyebrow: string; 
 function QueueCard({ doctor, state }: { doctor: Doctor; state: QueueState }) { const list = waiting(state, doctor.id); return <article className="queue-card"><div className="queue-top"><div><h3>{doctor.name}</h3><p>{doctor.department} · {doctor.room}</p></div><StatusBadge label={doctor.status} /></div><div className="queue-summary"><strong>{list.length}</strong><span>waiting</span><span>~{list.reduce((total, v) => total + v.predictedDuration + 2, 0)} min clearance</span></div><div className="timeline">{list.length ? list.map(v => <div className={`queue-row ${v.priorityLevel ? "priority-row" : ""}`} key={v.id}><b>{v.token}</b><span>{v.priorityLevel ? "Priority consultation" : v.complaint}</span><em>{clock(v.etaLower)}–{clock(v.etaUpper)}</em></div>) : <div className="empty-inline">No waiting patients</div>}</div></article>; }
 
 export function ClinicifyApp() {
-  const [screen, setScreen] = useState<Screen>("Overview"); const [role, setRole] = useState<Role | null>(null); const [state, setState] = useState<QueueState>(initialState); const [notice, setNotice] = useState("Sign in to connect to live Clinicify data."); const [user, setUser] = useState<User | null>(null); const [loginError, setLoginError] = useState("");
-  useEffect(() => onAuthStateChanged(firebaseAuth, async currentUser => { setUser(currentUser); if (!currentUser) { setRole(null); return; } const claims = await currentUser.getIdTokenResult(true); setRole(claims.claims.role as Role); }), []);
+  const [screen, setScreen] = useState<Screen>("Overview"); const [role, setRole] = useState<Role | null>(null); const [doctorId, setDoctorId] = useState<string>(); const [state, setState] = useState<QueueState>(initialState); const [notice, setNotice] = useState("Sign in to connect to live Clinicify data."); const [user, setUser] = useState<User | null>(null); const [loginError, setLoginError] = useState("");
+  useEffect(() => onAuthStateChanged(firebaseAuth, async currentUser => { setUser(currentUser); if (!currentUser) { setRole(null); setDoctorId(undefined); return; } const claims = await currentUser.getIdTokenResult(true); const signedRole = claims.claims.role as Role; setRole(signedRole); setDoctorId(typeof claims.claims.doctorId === "string" ? claims.claims.doctorId : undefined); setScreen(signedRole === "doctor" ? "Doctor queue" : signedRole === "pharmacist" ? "Pharmacy" : signedRole === "admin" ? "Admin" : "Reception"); }), []);
   useEffect(() => { if (!user || !role) return; return subscribeClinicify(setState); }, [user, role]);
   const mehta = state.doctors[0]; const current = state.visits.find(v => v.id === mehta.currentVisitId);
   const callApi = async (path: string, body: unknown) => { if (!user) throw new Error("Please sign in."); const token = await user.getIdToken(); const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify(body) }); const result = await response.json(); if (!response.ok) throw new Error(result.error ?? "Action failed"); return result; };
   const priority = async () => { try { const created = await callApi("/api/visits", { patient: { name: "Priority patient", age: 46, mobile: "synthetic-priority", email: "" }, doctorId: "d-mehta", complaint: "Authorized priority case", complaintCategory: "injury", departmentId: "general-medicine" }); await callApi("/api/priority", { visitId: created.visitId, doctorId: "d-mehta" }); setNotice("Priority case inserted in Dr. Mehta’s queue. Downstream ETAs were reforecast; Dr. Iyer is unchanged."); } catch (error) { setNotice(error instanceof Error ? error.message : "Priority insertion failed."); } };
   const patientsAhead = waiting(state, mehta.id).findIndex(v => v.token === "GM-080");
   const content = useMemo(() => {
-    if (screen === "Reception") return <Reception state={state} onConfirm={async () => { try { const result = await callApi("/api/visits", { patient: { name: "Meera Joshi", age: 28, mobile: "9876543210", email: "" }, doctorId: "d-mehta", complaint: "Persistent headache for two days", complaintCategory: "headache", departmentId: "general-medicine" }); setNotice(`Visit ${result.token} created. Tracking link is ready and email status is recorded.`); } catch (error) { setNotice(error instanceof Error ? error.message : "Could not create visit."); } }} />;
-    if (screen === "Doctor queue") return <DoctorView state={state} current={current} onAction={async (action) => { try { const next = waiting(state, "d-mehta")[0]; await callApi(`/api/operations/${action}`, { visitId: current?.id ?? next?.id, doctorId: "d-mehta" }); setNotice(`Consultation ${action}ed; queue reforecasted.`); } catch (error) { setNotice(error instanceof Error ? error.message : "Action failed."); } }} />;
-    if (screen === "Pharmacy") return <Pharmacy />;
-    if (screen === "Inventory") return <Inventory />;
-    if (screen === "Billing") return <Billing />;
-    if (screen === "Admin") return <Admin state={state} />;
+    if (screen === "Reception") return <ReceptionLive state={state} callApi={callApi} notify={setNotice} />;
+    if (screen === "Doctor queue") return <DoctorLive state={state} doctorId={doctorId} callApi={callApi} notify={setNotice} />;
+    if (screen === "Pharmacy") return <PharmacyLive role={role ?? "receptionist"} callApi={callApi} notify={setNotice} />;
+    if (screen === "Inventory") return <InventoryLive callApi={callApi} notify={setNotice} />;
+    if (screen === "Billing") return <BillingLive callApi={callApi} notify={setNotice} />;
+    if (screen === "Admin") return <AdminLive state={state} />;
     if (screen === "Tracking") return <Tracking state={state} ahead={patientsAhead} />;
     return <><Overview state={state} onPriority={priority} onTrack={() => setScreen("Tracking")} /><WorkflowControls state={state} role={role ?? "receptionist"} callApi={callApi} notify={setNotice}/></>;
   }, [screen, state, current, patientsAhead]);
