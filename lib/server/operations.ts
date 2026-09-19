@@ -31,6 +31,8 @@ export async function transferVisit(visitId: string, destinationDoctorId: string
   await db().runTransaction(async tx => { tx.update(visitRef, { doctorId: destinationDoctorId, sequenceNumber: Date.now(), priorityLevel: 0, priorityInsertedAt: null }); tx.set(db().collection("queueEvents").doc(), { visitId, eventType: "PATIENT_TRANSFERRED", actorUid: actor.uid, createdAt: FieldValue.serverTimestamp(), affectedQueueIds: [sourceDoctorId, destinationDoctorId] }); });
   await Promise.all([reforecastDoctorQueue(sourceDoctorId, actor.uid), reforecastDoctorQueue(destinationDoctorId, actor.uid)]);
 }
+export async function referVisit(visitId: string, destinationDoctorId: string, actor: { uid: string; role: Role; doctorId?: string }) {
+  const visit = await db().collection("visits").doc(visitId).get(); assert(visit.exists, "Visit not found."); assert(actor.role === "admin" || (actor.role === "doctor" && actor.doctorId === visit.data()?.doctorId), "Only the assigned doctor may refer this visit."); await transferVisit(visitId, destinationDoctorId, actor); await db().collection("queueEvents").add({ visitId, eventType:"PATIENT_REFERRED", actorUid:actor.uid, createdAt:FieldValue.serverTimestamp(), affectedQueueIds:[visit.data()?.doctorId,destinationDoctorId] }); }
 
 export async function markNoShow(visitId: string, actor: { uid: string; role: Role }) {
   assert(canManageQueue(actor.role), "You cannot mark a no-show."); const ref = db().collection("visits").doc(visitId); const snapshot = await ref.get(); const doctorId = snapshot.data()?.doctorId;

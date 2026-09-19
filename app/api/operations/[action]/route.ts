@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole } from "@/lib/server/authorization";
-import { adjustInventory, completeConsultation, markNoShow, recordBilling, savePrescription, setDoctorPause, startConsultation, transferVisit, updatePharmacyStatus } from "@/lib/server/operations";
+import { adjustInventory, completeConsultation, markNoShow, recordBilling, referVisit, savePrescription, setDoctorPause, startConsultation, transferVisit, updatePharmacyStatus } from "@/lib/server/operations";
 
 const allRoles = ["receptionist", "doctor", "pharmacist", "admin"] as const;
 export async function POST(request: NextRequest, { params }: { params: Promise<{ action: string }> }) {
@@ -9,6 +9,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (action === "start") await startConsultation(body.visitId, body.doctorId, actor);
     else if (action === "complete") await completeConsultation(body.visitId, body.doctorId, actor);
     else if (action === "transfer") await transferVisit(body.visitId, body.destinationDoctorId, actor);
+    else if (action === "refer") await referVisit(body.visitId, body.destinationDoctorId, actor);
     else if (action === "no-show") await markNoShow(body.visitId, actor);
     else if (action === "pause") await setDoctorPause(body.doctorId, Boolean(body.paused), actor);
     else if (action === "prescription") await savePrescription(body, actor);

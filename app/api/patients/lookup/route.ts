@@ -1,0 +1,4 @@
+import { NextRequest, NextResponse } from "next/server";
+import { adminDb } from "@/lib/firebase/admin";
+import { requireRole } from "@/lib/server/authorization";
+export async function GET(request: NextRequest) { try { await requireRole(request,["receptionist","admin"]); const q=request.nextUrl.searchParams.get("q")?.trim(); if(!q) return NextResponse.json({patient:null}); const hit=await adminDb().collection("patients").where("mobile","==",q).limit(1).get(); const match=hit.empty?await adminDb().collection("patients").where("hospitalPatientNumber","==",q).limit(1).get():hit; const doc=match.docs[0]; return NextResponse.json({patient:doc?{id:doc.id,...doc.data()}:null}); } catch(error) { return NextResponse.json({error:error instanceof Error?error.message:"Lookup failed"},{status:403}); } }
