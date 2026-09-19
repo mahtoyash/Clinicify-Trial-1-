@@ -1,6 +1,6 @@
 import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase/admin";
-import { reforecastDoctorQueue } from "@/lib/server/queue-service";
+import { createVisit, reforecastDoctorQueue } from "@/lib/server/queue-service";
 import type { Role } from "@/lib/domain/types";
 import { sendNotification } from "@/lib/server/notifications";
 
@@ -44,13 +44,33 @@ export async function setDoctorPause(doctorId: string, paused: boolean, actor: {
   assert(actor.role === "admin" || (actor.role === "doctor" && actor.doctorId === doctorId), "Only the assigned doctor may change this queue."); await db().collection("doctors").doc(doctorId).update({ status: paused ? "paused" : "available" }); await db().collection("queueEvents").add({ eventType: paused ? "DOCTOR_PAUSED" : "DOCTOR_RESUMED", actorUid: actor.uid, createdAt: FieldValue.serverTimestamp(), affectedQueueIds: [doctorId] }); await reforecastDoctorQueue(doctorId, actor.uid);
 }
 
-export async function savePrescription(input: { visitId: string; doctorId: string; items: Array<{ medicineId: string; name: string; dosage: string; frequency: string; timing: string; duration: string; quantity: number; notes?: string }>; notes?: string }, actor: { uid: string; role: Role; doctorId?: string }) {
+export async function savePrescription(input: { visitId: string; doctorId: string; items: Array<{ medicineId: string; name: string; dosage: string; frequency: string; timing: string; duration: string; quantity: number; notes?: string }>; notes?: string; referrals?: string[] }, actor: { uid: string; role: Role; doctorId?: string }) {
   assert(actor.role === "admin" || (actor.role === "doctor" && actor.doctorId === input.doctorId), "Only the assigned doctor may prescribe."); assert(input.items.length > 0, "Add at least one medicine.");
   input.items.forEach(item => assert(typeof item.medicineId === "string" && typeof item.dosage === "string" && item.dosage.trim() && typeof item.frequency === "string" && item.frequency.trim() && typeof item.timing === "string" && item.timing.trim() && typeof item.duration === "string" && item.duration.trim() && Number.isInteger(item.quantity) && item.quantity > 0, "Every medicine needs dosage, frequency, timing, duration, and a positive quantity."));
   const visit = await db().collection("visits").doc(input.visitId).get(); assert(visit.exists && visit.data()?.doctorId === input.doctorId, "Visit does not belong to this doctor."); const prescriptionRef = db().collection("prescriptions").doc(); const orderRef = db().collection("pharmacyOrders").doc();
   const medicines = await Promise.all(input.items.map(item => db().collection("medicines").doc(item.medicineId).get())); assert(medicines.every(medicine => medicine.exists && medicine.data()?.active !== false), "One or more selected medicines are unavailable."); const pricedItems = input.items.map((item,index) => ({ ...item, unitPrice: medicines[index]?.data()?.unitPrice ?? 0, stockStatus: medicines[index]?.data()?.stockStatus ?? "unknown" })); const total = pricedItems.reduce((sum,item)=>sum + item.quantity * item.unitPrice,0);
-  await db().runTransaction(async tx => { tx.set(prescriptionRef, { ...input, items: pricedItems, patientId: visit.data()!.patientId, createdAt: FieldValue.serverTimestamp(), status: "saved" }); tx.set(orderRef, { prescriptionId: prescriptionRef.id, visitId: input.visitId, patientId: visit.data()!.patientId, token: visit.data()!.token, doctorId: input.doctorId, items: pricedItems, status: "received", receivedAt: FieldValue.serverTimestamp(), billingStatus: "pending", total }); tx.set(db().collection("queueEvents").doc(), { visitId: input.visitId, eventType: "PRESCRIPTION_SAVED", actorUid: actor.uid, createdAt: FieldValue.serverTimestamp(), affectedQueueIds: [] }); });
+  const referrals = [...new Set((input.referrals ?? []).filter(value => typeof value === "string" && value.trim()))];
+  const doctor = await db().collection("doctors").doc(input.doctorId).get();
+  await db().runTransaction(async tx => {
+    tx.set(prescriptionRef, { ...input, referrals, items: pricedItems, patientId: visit.data()!.patientId, patientName: visit.data()!.patientName, token: visit.data()!.token, doctorName: doctor.data()?.name ?? "Doctor", createdAt: FieldValue.serverTimestamp(), status: "saved" });
+    tx.set(orderRef, { prescriptionId: prescriptionRef.id, visitId: input.visitId, patientId: visit.data()!.patientId, patientName: visit.data()!.patientName, token: visit.data()!.token, doctorId: input.doctorId, doctorName: doctor.data()?.name ?? "Doctor", referrals, notes: input.notes ?? "", items: pricedItems, status: "received", receivedAt: FieldValue.serverTimestamp(), billingStatus: "pending", total });
+    referrals.forEach(department => tx.set(db().collection("referralRequests").doc(), { prescriptionId: prescriptionRef.id, originVisitId: input.visitId, patientId: visit.data()!.patientId, patientName: visit.data()!.patientName, age: visit.data()!.age, mobile: visit.data()!.mobile, bodyTemperature: visit.data()!.bodyTemperature ?? null, temperatureUnit: visit.data()!.temperatureUnit ?? null, weightKg: visit.data()!.weightKg ?? null, complaintText: visit.data()!.complaintText, referringDoctorId: input.doctorId, referringDoctorName: doctor.data()?.name ?? "Doctor", department, status: "pending_allocation", createdAt: FieldValue.serverTimestamp() }));
+    tx.set(db().collection("queueEvents").doc(), { visitId: input.visitId, eventType: "PRESCRIPTION_SAVED", actorUid: actor.uid, createdAt: FieldValue.serverTimestamp(), affectedQueueIds: [] });
+  });
   await sendNotification({ visitId: input.visitId, recipient: visit.data()?.email, type: "PRESCRIPTION_AVAILABLE", subject: "Your Clinicify prescription is available", html: "<p>Your prescription is ready for pharmacy fulfillment. View your secure tracking link for details.</p>" }); return { prescriptionId: prescriptionRef.id, orderId: orderRef.id };
+}
+
+export async function allocateReferral(referralId: string, doctorId: string, actor: { uid: string; role: Role; department?: string }) {
+  assert(["receptionist", "admin"].includes(actor.role), "Only reception may allocate a referral.");
+  const referralRef = db().collection("referralRequests").doc(referralId); const referral = await referralRef.get(); const data = referral.data();
+  assert(referral.exists && data?.status === "pending_allocation", "This referral is no longer awaiting allocation.");
+  const referralData = data!;
+  assert(actor.role === "admin" || actor.department === referralData.department, "This referral belongs to another department.");
+  const doctor = await db().collection("doctors").doc(doctorId).get();
+  assert(doctor.exists && doctor.data()?.department === referralData.department && doctor.data()?.status !== "paused", "Choose an available doctor from the referred department.");
+  const created = await createVisit({ patient: { name:referralData.patientName, age:referralData.age, mobile:referralData.mobile, bodyTemperature:referralData.bodyTemperature ?? undefined, temperatureUnit:referralData.temperatureUnit ?? undefined, weightKg:referralData.weightKg ?? undefined }, doctorId, departmentId:doctor.data()!.departmentId, complaint:`Referral from ${referralData.referringDoctorName}: ${referralData.complaintText ?? "follow-up"}`, complaintCategory:"follow_up" }, actor.uid);
+  await referralRef.update({ status:"allocated", allocatedDoctorId:doctorId, allocatedVisitId:created.visitId, allocatedBy:actor.uid, allocatedAt:FieldValue.serverTimestamp() });
+  return created;
 }
 
 const pharmacyStates = ["received", "preparing", "ready", "dispensed"];
