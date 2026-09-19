@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint .",
     "test": "vitest run",
-    "seed": "tsx scripts/seed.ts"
+    "seed": "tsx scripts/seed.ts",
+    "clear-demo": "tsx scripts/clear-demo-clinical.ts"
   },
   "dependencies": {
     "firebase": "12.4.0",
