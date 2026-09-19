@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { initialState } from "../demo-data";
-import { insertPriority, transferVisit } from "./queue";
+import { insertPriority, reforecastDoctorQueue, transferVisit } from "./queue";
 import type { Visit } from "./types";
 const priority: Visit = { id: "v-emergency", patientId: "p-e", patientName: "Priority patient", age: 45, token: "E-04", doctorId: "d-mehta", complaint: "Injury", complaintCategory: "injury", priorityLevel: 0, sequenceNumber: 0, status: "waiting", predictedDuration: 14 };
 describe("doctor-specific queue reforecasting", () => {
   it("priority in Dr A changes Dr A but not Dr B", () => { const beforeB = initialState.visits.find(v => v.id === "v-b31")!.etaUpper; const after = insertPriority(initialState, priority, "d-mehta", 1000000); expect(after.visits.find(v => v.id === "v-078")!.etaUpper).not.toBe(initialState.visits.find(v => v.id === "v-078")!.etaUpper); expect(after.visits.find(v => v.id === "v-b31")!.etaUpper).toBe(beforeB); });
   it("transfer reforecasts both source and destination", () => { const next = transferVisit(initialState, "v-079", "d-iyer", 1000000); expect(next.visits.find(v => v.id === "v-079")!.doctorId).toBe("d-iyer"); expect(next.events.at(-1)?.type).toBe("PATIENT_TRANSFERRED"); });
+  it("no-show removes downstream workload", () => { const now = 1000000; const before = reforecastDoctorQueue(initialState, "d-mehta", now); const removed = reforecastDoctorQueue({ ...initialState, visits: initialState.visits.map(v => v.id === "v-078" ? { ...v, status: "no_show" as const } : v) }, "d-mehta", now); expect(removed.visits.find(v => v.id === "v-080")!.etaUpper).toBeLessThan(before.visits.find(v => v.id === "v-080")!.etaUpper!); });
+  it("pause affects only its doctor queue", () => { const now = 1000000; const paused = reforecastDoctorQueue({ ...initialState, doctors: initialState.doctors.map(d => d.id === "d-mehta" ? { ...d, status: "paused" as const } : d) }, "d-mehta", now); const normal = reforecastDoctorQueue(initialState, "d-mehta", now); expect(paused.visits.find(v => v.id === "v-078")!.etaUpper).toBeGreaterThan(normal.visits.find(v => v.id === "v-078")!.etaUpper!); expect(paused.visits.find(v => v.id === "v-b31")!.etaUpper).toBe(initialState.visits.find(v => v.id === "v-b31")!.etaUpper); });
 });
