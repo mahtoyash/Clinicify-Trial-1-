@@ -12,7 +12,8 @@ export async function startConsultation(visitId: string, doctorId: string, actor
   assert(actor.role === "admin" || (actor.role === "doctor" && actor.doctorId === doctorId), "Only the assigned doctor may start this consultation.");
   const visitRef = db().collection("visits").doc(visitId); const visit = await visitRef.get();
   assert(visit.exists && visit.data()?.doctorId === doctorId && visit.data()?.status === "waiting", "Visit is not available to start.");
-  await db().runTransaction(async tx => { tx.update(visitRef, { status: "in_consultation", consultationStartedAt: FieldValue.serverTimestamp() }); tx.set(db().collection("doctors").doc(doctorId), { status: "busy", currentVisitId: visitId }, { merge: true }); tx.set(db().collection("queueEvents").doc(), { visitId, eventType: "CONSULTATION_STARTED", actorUid: actor.uid, createdAt: FieldValue.serverTimestamp(), affectedQueueIds: [doctorId] }); });
+  const midpoint = ((visit.data()?.etaLower?.toMillis?.() ?? Date.now()) + (visit.data()?.etaUpper?.toMillis?.() ?? Date.now())) / 2;
+  await db().runTransaction(async tx => { tx.update(visitRef, { status: "in_consultation", consultationStartedAt: FieldValue.serverTimestamp(), predictedStartAt: new Date(midpoint) }); tx.set(db().collection("doctors").doc(doctorId), { status: "busy", currentVisitId: visitId }, { merge: true }); tx.set(db().collection("queueEvents").doc(), { visitId, eventType: "CONSULTATION_STARTED", actorUid: actor.uid, createdAt: FieldValue.serverTimestamp(), affectedQueueIds: [doctorId] }); });
   await reforecastDoctorQueue(doctorId, actor.uid);
 }
 
@@ -20,8 +21,8 @@ export async function completeConsultation(visitId: string, doctorId: string, ac
   assert(actor.role === "admin" || (actor.role === "doctor" && actor.doctorId === doctorId), "Only the assigned doctor may complete this consultation.");
   const visitRef = db().collection("visits").doc(visitId); const visit = await visitRef.get(); const data = visit.data();
   assert(visit.exists && data?.doctorId === doctorId && data?.status === "in_consultation", "Visit is not currently in consultation.");
-  const started = data?.consultationStartedAt?.toMillis?.() ?? Date.now(); const actualDurationMin = Math.max(1, Math.round((Date.now() - started) / 60000));
-  await db().runTransaction(async tx => { tx.update(visitRef, { status: "completed", consultationEndedAt: FieldValue.serverTimestamp(), actualDurationMin }); tx.set(db().collection("doctors").doc(doctorId), { status: "available", currentVisitId: null }, { merge: true }); tx.set(db().collection("queueEvents").doc(), { visitId, eventType: "CONSULTATION_ENDED", actorUid: actor.uid, createdAt: FieldValue.serverTimestamp(), metadata: { actualDurationMin }, affectedQueueIds: [doctorId] }); });
+  const started = data?.consultationStartedAt?.toMillis?.() ?? Date.now(); const actualDurationMin = Math.max(1, Math.round((Date.now() - started) / 60000)); const predictionErrorMin = Math.round((Date.now() - (data?.predictedStartAt?.toMillis?.() ?? Date.now())) / 60000);
+  await db().runTransaction(async tx => { tx.update(visitRef, { status: "completed", consultationEndedAt: FieldValue.serverTimestamp(), actualDurationMin, predictionErrorMin }); tx.set(db().collection("doctors").doc(doctorId), { status: "available", currentVisitId: null }, { merge: true }); tx.set(db().collection("queueEvents").doc(), { visitId, eventType: "CONSULTATION_ENDED", actorUid: actor.uid, createdAt: FieldValue.serverTimestamp(), metadata: { actualDurationMin, predictionErrorMin }, affectedQueueIds: [doctorId] }); });
   await reforecastDoctorQueue(doctorId, actor.uid);
 }
 

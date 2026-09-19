@@ -18,7 +18,7 @@ export async function reforecastDoctorQueue(doctorId: string, actorUid: string) 
   let workload = doctor.status === "paused" ? 15 : 0;
   if (doctor.currentVisitId) { const current = await db.collection("visits").doc(doctor.currentVisitId).get(); const active = current.data(); if (active?.consultationStartedAt) workload += Math.max((active.predictedDurationMin ?? 8) - Math.floor((now - active.consultationStartedAt.toMillis()) / 60000), 2); }
   const batch = db.batch();
-  for (const visit of visits) { batch.update(db.collection("visits").doc(visit.id), { ...eta(workload, now), lastReforecastAt: FieldValue.serverTimestamp() }); workload += (visit.predictedDurationMin ?? 8) + buffer; }
+  for (const visit of visits) { batch.update(db.collection("visits").doc(visit.id), { ...eta(workload, now), etaRevisionCount: FieldValue.increment(1), lastReforecastAt: FieldValue.serverTimestamp() }); workload += (visit.predictedDurationMin ?? 8) + buffer; }
   batch.set(db.collection("queues").doc(queueId(doctorId)), { hospitalId: "H1", doctorId, departmentId: doctor.departmentId, date: new Date().toISOString().slice(0,10), currentVisitId: doctor.currentVisitId ?? null, paused: doctor.status === "paused", lastReforecastAt: FieldValue.serverTimestamp(), actorUid }, { merge: true });
   await batch.commit();
   return visits.map(v => v.id);

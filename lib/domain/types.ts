@@ -12,7 +12,7 @@ export interface Visit {
   complaint: string; complaintCategory: ComplaintCategory; priorityLevel: PriorityLevel;
   priorityInsertedAt?: number; sequenceNumber: number; status: VisitStatus; predictedDuration: number;
   etaLower?: number; etaUpper?: number; recommendedArrival?: number; consultationStartedAt?: number;
-  consultationEndedAt?: number;
+  consultationEndedAt?: number; registeredAt?: number; actualDuration?: number; etaRevisionCount?: number; predictionErrorMin?: number;
 }
 export type ComplaintCategory = "general" | "fever" | "headache" | "injury" | "follow_up";
 export interface QueueEvent { id: string; type: "PRIORITY_INSERTED" | "VISIT_CREATED" | "CONSULTATION_ENDED" | "PATIENT_TRANSFERRED"; doctorId: string; visitId: string; createdAt: number; actor: string; }

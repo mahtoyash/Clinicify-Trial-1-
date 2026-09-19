@@ -5,14 +5,17 @@ service cloud.firestore {
     function role() { return request.auth.token.role; }
     function staff() { return signedIn() && role() in ['receptionist', 'doctor', 'pharmacist', 'admin']; }
     match /users/{userId} { allow read: if signedIn() && (request.auth.uid == userId || role() == 'admin'); allow write: if false; }
-    match /visits/{visitId} { allow read: if staff(); allow write: if false; }
-    match /patients/{patientId} { allow read: if staff(); allow write: if false; }
+    function admin() { return staff() && role() == 'admin'; }
+    function reception() { return staff() && role() == 'receptionist'; }
+    function ownDoctorVisit() { return role() == 'doctor' && resource.data.doctorId == request.auth.token.doctorId; }
+    match /visits/{visitId} { allow read: if admin() || reception() || ownDoctorVisit(); allow write: if false; }
+    match /patients/{patientId} { allow read: if admin() || reception(); allow write: if false; }
     match /doctors/{doctorId} { allow read: if staff(); allow write: if false; }
-    match /queues/{queueId} { allow read: if staff(); allow write: if false; }
-    match /queueEvents/{queueEventId} { allow read: if staff(); allow write: if false; }
-    match /prescriptions/{prescriptionId} { allow read: if staff(); allow write: if false; }
-    match /pharmacyOrders/{orderId} { allow read: if staff(); allow write: if false; }
-    match /medicines/{medicineId} { allow read: if staff(); allow write: if false; }
-    match /notifications/{notificationId} { allow read: if staff(); allow write: if false; }
+    match /queues/{queueId} { allow read: if admin() || reception() || (role() == 'doctor' && resource.data.doctorId == request.auth.token.doctorId); allow write: if false; }
+    match /queueEvents/{queueEventId} { allow read: if admin() || reception(); allow write: if false; }
+    match /prescriptions/{prescriptionId} { allow read: if admin() || role() == 'pharmacist' || (role() == 'doctor' && resource.data.doctorId == request.auth.token.doctorId); allow write: if false; }
+    match /pharmacyOrders/{orderId} { allow read: if admin() || role() == 'pharmacist'; allow write: if false; }
+    match /medicines/{medicineId} { allow read: if admin() || role() == 'pharmacist'; allow write: if false; }
+    match /notifications/{notificationId} { allow read: if admin() || reception(); allow write: if false; }
   }
 }
