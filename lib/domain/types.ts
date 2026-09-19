@@ -5,7 +5,7 @@ export type PriorityLevel = 0 | 1;
 
 export interface Doctor {
   id: string; name: string; department: string; room: string; status: DoctorStatus;
-  currentVisitId?: string; averageDuration: number;
+  departmentId?: string; currentVisitId?: string; averageDuration: number;
 }
 export interface Visit {
   id: string; patientId: string; patientName: string; age: number; token: string; doctorId: string;
